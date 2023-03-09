@@ -1,0 +1,56 @@
+name: Python CI
+on:
+  push:
+  pull_request:
+  release:
+    types: [ released ]
+
+jobs:
+  linting:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10"]
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: pip install pre-commit
+      - name: Run pre-commit
+        run: pre-commit run --all-files
+
+  test-app:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10"]
+    steps:
+    - uses: actions/checkout@v3
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+        cache-dependency-path: 'requirements*.txt'
+    - name: Install dependencies
+      run: |
+        pip install wheel
+        pip install -r requirements-test.txt coveralls
+      env:
+        PIP_USE_MIRRORS: true
+    - name: Run mypy
+      run: mypy .
+    - name: Run tests and coverage
+      run: |
+        coverage run --source=$SOURCE_FOLDER -m pytest -rxXs
+      env:
+        SOURCE_FOLDER: flaskr
+    - name: Send results to coveralls
+      continue-on-error: true  # Ignore coveralls problems
+      run: coveralls --service=github
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Required for coveralls
