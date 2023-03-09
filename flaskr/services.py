@@ -1,36 +1,34 @@
 import os
+from functools import cache
 
 import requests
 from eth_account import Account
+from eth_account.signers.local import LocalAccount
 from hexbytes import HexBytes
 from web3 import Web3
-from werkzeug.exceptions import HTTPException
 
-Account.enable_unaudited_hdwallet_features()
-MNEMONIC = os.environ.get("MNEMONIC")
-DEPLOYER_ACCOUNT = Account.from_mnemonic(MNEMONIC) if MNEMONIC else Account.create()
+from .exceptions import (
+    ChainNotSupported,
+    ContractIsAlreadyDeployed,
+    NotEnoughFunds,
+    RPCConnectionError,
+)
+
 CONTRACT_DEPLOYMENT_CODE = HexBytes(
     "0x604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3"
 )
-MINIMUM_DEPLOY_GAS = os.environ.get("MINIMUM_DEPLOY_GAS", 100_000)
 
 
-class ChainNotSupported(HTTPException):
-    code = 422
-    description = "Chain not supported, please send a PR to https://github.com/ethereum-lists/chains"
+@cache
+def get_deployer_account() -> LocalAccount:
+    Account.enable_unaudited_hdwallet_features()
+    mnemonic = os.environ.get("MNEMONIC")
+    return Account.from_mnemonic(mnemonic) if mnemonic else Account.create()
 
 
-class NotEnoughFunds(HTTPException):
-    code = 422
-
-
-class ContractIsAlreadyDeployed(HTTPException):
-    code = 422
-    description = "Contract is already deployed"
-
-
-class RPCConnectionError(HTTPException):
-    code = 422
+@cache
+def get_minimum_deploy_gas():
+    return os.environ.get("MINIMUM_DEPLOY_GAS", 100_000)
 
 
 def check_chain_id(chain_id: int) -> bool:
@@ -43,9 +41,10 @@ def check_chain_id(chain_id: int) -> bool:
 
 def deploy_contract(rpc_url: str) -> HexBytes:
     w3 = Web3(Web3.HTTPProvider(rpc_url))
+    deployer_account = get_deployer_account()
 
     try:
-        account_nonce = w3.eth.get_transaction_count(DEPLOYER_ACCOUNT.address)
+        account_nonce = w3.eth.get_transaction_count(deployer_account.address)
         if account_nonce != 0:
             raise ContractIsAlreadyDeployed
     except IOError:
@@ -53,20 +52,22 @@ def deploy_contract(rpc_url: str) -> HexBytes:
 
     chain_id = w3.eth.chain_id
     if not check_chain_id(chain_id):
-        raise ValueError()
+        raise ChainNotSupported(
+            f"Chain {chain_id} not supported, please send a PR to https://github.com/ethereum-lists/chains"
+        )
 
     tx = {
-        "from": DEPLOYER_ACCOUNT.address,
+        "from": deployer_account.address,
         "data": CONTRACT_DEPLOYMENT_CODE,
     }
     gas_estimated = w3.eth.estimate_gas(tx)
 
     tx["nonce"] = 0
-    tx["gas"] = max(MINIMUM_DEPLOY_GAS, gas_estimated)
+    tx["gas"] = max(get_minimum_deploy_gas(), gas_estimated)
     tx["gasPrice"] = w3.eth.gas_price
     tx["chainId"] = chain_id
 
-    signed = DEPLOYER_ACCOUNT.sign_transaction(tx)
+    signed = deployer_account.sign_transaction(tx)
     try:
         return w3.eth.send_raw_transaction(signed.rawTransaction)
     except ValueError as exc:
@@ -74,5 +75,5 @@ def deploy_contract(rpc_url: str) -> HexBytes:
         required_funds = tx["gasPrice"] * tx["gas"]
         required_funds_eth = Web3.fromWei(required_funds, "ether")
         raise NotEnoughFunds(
-            f"Required at least {required_funds} wei ({required_funds_eth} eth). Send funds to {DEPLOYER_ACCOUNT.address}"
+            f"Required at least {required_funds} wei ({required_funds_eth} eth). Send funds to {deployer_account.address}"
         )
