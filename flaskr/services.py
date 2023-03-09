@@ -6,9 +6,9 @@ from hexbytes import HexBytes
 from web3 import Web3
 from werkzeug.exceptions import HTTPException
 
-MNEMONIC = os.environ["MNEMONIC"]
 Account.enable_unaudited_hdwallet_features()
-DEPLOYER_ACCOUNT = Account.from_mnemonic(MNEMONIC)
+MNEMONIC = os.environ.get("MNEMONIC")
+DEPLOYER_ACCOUNT = Account.from_mnemonic(MNEMONIC) if MNEMONIC else Account.create()
 CONTRACT_DEPLOYMENT_CODE = HexBytes(
     "0x604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3"
 )
@@ -29,6 +29,10 @@ class ContractIsAlreadyDeployed(HTTPException):
     description = "Contract is already deployed"
 
 
+class RPCConnectionError(HTTPException):
+    code = 422
+
+
 def check_chain_id(chain_id: int) -> bool:
     url = (
         f"https://chainlist.org/_next/data/cTmGuUPQ4QLoYHDQ-Zzz6/chain/{chain_id}.json"
@@ -39,6 +43,14 @@ def check_chain_id(chain_id: int) -> bool:
 
 def deploy_contract(rpc_url: str) -> HexBytes:
     w3 = Web3(Web3.HTTPProvider(rpc_url))
+
+    try:
+        account_nonce = w3.eth.get_transaction_count(DEPLOYER_ACCOUNT.address)
+        if account_nonce != 0:
+            raise ContractIsAlreadyDeployed
+    except IOError:
+        raise RPCConnectionError(f"Error connecting to RPC {rpc_url}")
+
     chain_id = w3.eth.chain_id
     if not check_chain_id(chain_id):
         raise ValueError()
@@ -58,12 +70,9 @@ def deploy_contract(rpc_url: str) -> HexBytes:
     try:
         return w3.eth.send_raw_transaction(signed.rawTransaction)
     except ValueError as exc:
-        if "nonce" in str(exc).lower():
-            raise ContractIsAlreadyDeployed()
-        else:
-            # No funds
-            required_funds = tx["gasPrice"] * tx["gas"]
-            required_funds_eth = Web3.fromWei(required_funds, "ether")
-            raise NotEnoughFunds(
-                f"Required at least {required_funds} wei ({required_funds_eth} eth). Send funds to {DEPLOYER_ACCOUNT.address}"
-            )
+        # No funds
+        required_funds = tx["gasPrice"] * tx["gas"]
+        required_funds_eth = Web3.fromWei(required_funds, "ether")
+        raise NotEnoughFunds(
+            f"Required at least {required_funds} wei ({required_funds_eth} eth). Send funds to {DEPLOYER_ACCOUNT.address}"
+        )
