@@ -15,6 +15,7 @@ Automatic deployer for https://github.com/safe-global/safe-singleton-factory
 }
 ```
 
+Response:
 ```json
 {
     "code": 422,
@@ -22,7 +23,8 @@ Automatic deployer for https://github.com/safe-global/safe-singleton-factory
     "description": "Required at least 4999273600400000 wei (0.0049992736004 eth). Send funds to 0xE1CB04A0fA36DdD16a06ea828007E35e1a3cBC37"
 }
 ```
-You need to send funds to the deployer and then if everything goes well this response will be returned:
+
+- You need to send funds to the deployer and then if everything goes well this response will be returned:
 ```json
 {
   "txHash": "<0x prefixed transaction hash>"
